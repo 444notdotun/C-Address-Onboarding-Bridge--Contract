@@ -16,9 +16,7 @@ use std::{format, println};
 use crate::OnboardingBridge;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    testutils::Address as _,
-    Address, Env, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, Vec,
 };
 
 // ── Inline minimal token (mirrors the one in tests.rs) ────────────────────────
@@ -146,11 +144,17 @@ fn bench_fund_amount(amount: i128) {
 }
 
 #[test]
-fn bench_fund_c_address_small()  { bench_fund_amount(100); }
+fn bench_fund_c_address_small() {
+    bench_fund_amount(100);
+}
 #[test]
-fn bench_fund_c_address_medium() { bench_fund_amount(1_000_000); }
+fn bench_fund_c_address_medium() {
+    bench_fund_amount(1_000_000);
+}
 #[test]
-fn bench_fund_c_address_large()  { bench_fund_amount(1_000_000_000); }
+fn bench_fund_c_address_large() {
+    bench_fund_amount(1_000_000_000);
+}
 
 // ── batch_fund_c_address ───────────────────────────────────────────────────────
 
@@ -174,13 +178,21 @@ fn bench_batch(size: u32) {
 }
 
 #[test]
-fn bench_batch_1()  { bench_batch(1); }
+fn bench_batch_1() {
+    bench_batch(1);
+}
 #[test]
-fn bench_batch_5()  { bench_batch(5); }
+fn bench_batch_5() {
+    bench_batch(5);
+}
 #[test]
-fn bench_batch_10() { bench_batch(10); }
+fn bench_batch_10() {
+    bench_batch(10);
+}
 #[test]
-fn bench_batch_50() { bench_batch(50); }
+fn bench_batch_50() {
+    bench_batch(50);
+}
 
 // ── withdraw_fees ──────────────────────────────────────────────────────────────
 
@@ -201,11 +213,17 @@ fn bench_withdraw(amount: i128) {
 }
 
 #[test]
-fn bench_withdraw_fees_small()  { bench_withdraw(10); }
+fn bench_withdraw_fees_small() {
+    bench_withdraw(10);
+}
 #[test]
-fn bench_withdraw_fees_medium() { bench_withdraw(500); }
+fn bench_withdraw_fees_medium() {
+    bench_withdraw(500);
+}
 #[test]
-fn bench_withdraw_fees_large()  { bench_withdraw(5_000); }
+fn bench_withdraw_fees_large() {
+    bench_withdraw(5_000);
+}
 
 // ── view functions ─────────────────────────────────────────────────────────────
 
@@ -216,21 +234,51 @@ fn bench_views() {
     let addr = Address::generate(&env);
 
     let views: &[(&str, &dyn Fn())] = &[
-        ("query_fee_bps",          &|| { bridge.query_fee_bps(); }),
-        ("query_fee_collector",    &|| { bridge.query_fee_collector(); }),
-        ("query_admin",            &|| { bridge.query_admin(); }),
-        ("query_is_initialized",   &|| { bridge.query_is_initialized(); }),
-        ("query_is_paused",        &|| { bridge.query_is_paused(); }),
-        ("query_referral_rate",    &|| { bridge.query_referral_rate(); }),
-        ("query_fee_balance",      &|| { bridge.query_fee_balance(&token_id); }),
-        ("query_balance",          &|| { bridge.query_balance(&addr, &token_id); }),
-        ("query_is_blocked",       &|| { bridge.query_is_blocked(&addr); }),
-        ("query_is_allowlisted",   &|| { bridge.query_is_allowlisted(&addr); }),
-        ("query_allowlist_mode",   &|| { bridge.query_allowlist_mode(); }),
-        ("query_nonce",            &|| { bridge.query_nonce(&addr); }),
-        ("query_calculate_fee",    &|| { bridge.query_calculate_fee(&1_000_000i128); }),
-        ("query_total_bridged",    &|| { bridge.query_total_bridged(&token_id); }),
-        ("query_total_fees_collected", &|| { bridge.query_total_fees_collected(&token_id); }),
+        ("query_fee_bps", &|| {
+            bridge.query_fee_bps();
+        }),
+        ("query_fee_collector", &|| {
+            bridge.query_fee_collector();
+        }),
+        ("query_admin", &|| {
+            bridge.query_admin();
+        }),
+        ("query_is_initialized", &|| {
+            bridge.query_is_initialized();
+        }),
+        ("query_is_paused", &|| {
+            bridge.query_is_paused();
+        }),
+        ("query_referral_rate", &|| {
+            bridge.query_referral_rate();
+        }),
+        ("query_fee_balance", &|| {
+            bridge.query_fee_balance(&token_id);
+        }),
+        ("query_balance", &|| {
+            bridge.query_balance(&addr, &token_id);
+        }),
+        ("query_is_blocked", &|| {
+            bridge.query_is_blocked(&addr);
+        }),
+        ("query_is_allowlisted", &|| {
+            bridge.query_is_allowlisted(&addr);
+        }),
+        ("query_allowlist_mode", &|| {
+            bridge.query_allowlist_mode();
+        }),
+        ("query_nonce", &|| {
+            bridge.query_nonce(&addr);
+        }),
+        ("query_calculate_fee", &|| {
+            bridge.query_calculate_fee(&1_000_000i128);
+        }),
+        ("query_total_bridged", &|| {
+            bridge.query_total_bridged(&token_id);
+        }),
+        ("query_total_fees_collected", &|| {
+            bridge.query_total_fees_collected(&token_id);
+        }),
     ];
 
     for (name, f) in views {
@@ -246,17 +294,43 @@ fn bench_admin_setters() {
     let bridge = crate::OnboardingBridgeClient::new(&env, &bridge_id);
     let new_addr = Address::generate(&env);
 
-    measure(&env, "set_fee_bps",        &|| { bridge.set_fee_bps(&200u32, &None); });
-    measure(&env, "set_referral_rate",  &|| { bridge.set_referral_rate(&2000u32, &None); });
-    measure(&env, "set_fee_collector",  &|| { bridge.set_fee_collector(&new_addr, &None); });
-    measure(&env, "set_admin",          &|| { bridge.set_admin(&new_addr, &None); });
-    measure(&env, "add_asset",          &|| { bridge.add_asset(&token_id, &None); });
-    measure(&env, "remove_asset",       &|| { bridge.remove_asset(&token_id, &None); });
-    measure(&env, "add_to_blocklist",   &|| { bridge.add_to_blocklist(&new_addr, &None); });
-    measure(&env, "remove_from_blocklist", &|| { bridge.remove_from_blocklist(&new_addr, &None); });
-    measure(&env, "add_to_allowlist",   &|| { bridge.add_to_allowlist(&new_addr, &None); });
-    measure(&env, "remove_from_allowlist", &|| { bridge.remove_from_allowlist(&new_addr, &None); });
-    measure(&env, "set_allowlist_mode", &|| { bridge.set_allowlist_mode(&true, &None); });
-    measure(&env, "pause",              &|| { bridge.pause(&None); });
-    measure(&env, "unpause",            &|| { bridge.unpause(&None); });
+    measure(&env, "set_fee_bps", &|| {
+        bridge.set_fee_bps(&200u32, &None);
+    });
+    measure(&env, "set_referral_rate", &|| {
+        bridge.set_referral_rate(&2000u32, &None);
+    });
+    measure(&env, "set_fee_collector", &|| {
+        bridge.set_fee_collector(&new_addr, &None);
+    });
+    measure(&env, "set_admin", &|| {
+        bridge.set_admin(&new_addr, &None);
+    });
+    measure(&env, "add_asset", &|| {
+        bridge.add_asset(&token_id, &None);
+    });
+    measure(&env, "remove_asset", &|| {
+        bridge.remove_asset(&token_id, &None);
+    });
+    measure(&env, "add_to_blocklist", &|| {
+        bridge.add_to_blocklist(&new_addr, &None);
+    });
+    measure(&env, "remove_from_blocklist", &|| {
+        bridge.remove_from_blocklist(&new_addr, &None);
+    });
+    measure(&env, "add_to_allowlist", &|| {
+        bridge.add_to_allowlist(&new_addr, &None);
+    });
+    measure(&env, "remove_from_allowlist", &|| {
+        bridge.remove_from_allowlist(&new_addr, &None);
+    });
+    measure(&env, "set_allowlist_mode", &|| {
+        bridge.set_allowlist_mode(&true, &None);
+    });
+    measure(&env, "pause", &|| {
+        bridge.pause(&None);
+    });
+    measure(&env, "unpause", &|| {
+        bridge.unpause(&None);
+    });
 }

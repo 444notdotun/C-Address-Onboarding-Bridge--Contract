@@ -116,7 +116,12 @@ fn test_fund_without_initialize() {
     let (bridge_id, token_id) = register_all_contracts_mocked(&env);
     let bridge = create_bridge_client(&env, &bridge_id);
 
-    bridge.initialize(&Address::generate(&env), &Address::generate(&env), &50u32, &None);
+    bridge.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &50u32,
+        &None,
+    );
 
     let b2_id = env.register(OnboardingBridge, ());
     let b2 = crate::OnboardingBridgeClient::new(&env, &b2_id);
@@ -1143,6 +1148,58 @@ impl TestToken {
     }
 }
 
+mod swap_pool_contract {
+    use super::*;
+
+    #[contracttype]
+    pub enum SwapPoolDataKey {
+        InputToken,
+        OutputToken,
+        Rate,
+    }
+
+    #[contract]
+    pub struct SwapPool;
+
+    #[contractimpl]
+    impl SwapPool {
+        pub fn initialize(e: Env, input_token: Address, output_token: Address, rate: i128) {
+            e.storage()
+                .instance()
+                .set(&SwapPoolDataKey::InputToken, &input_token);
+            e.storage()
+                .instance()
+                .set(&SwapPoolDataKey::OutputToken, &output_token);
+            e.storage().instance().set(&SwapPoolDataKey::Rate, &rate);
+        }
+
+        pub fn swap(e: Env, min_amount_out: i128, to: Address) -> i128 {
+            let rate: i128 = e.storage().instance().get(&SwapPoolDataKey::Rate).unwrap();
+            let input_token: Address = e
+                .storage()
+                .instance()
+                .get(&SwapPoolDataKey::InputToken)
+                .unwrap();
+            let input_token_client = soroban_sdk::token::Client::new(&e, &input_token);
+            let amount_in = input_token_client.balance(&e.current_contract_address());
+            let amount_out = amount_in.checked_mul(rate).unwrap_or(0);
+            if amount_out < min_amount_out {
+                return amount_out;
+            }
+            let output_token: Address = e
+                .storage()
+                .instance()
+                .get(&SwapPoolDataKey::OutputToken)
+                .unwrap();
+            let output_token_client = soroban_sdk::token::Client::new(&e, &output_token);
+            output_token_client.transfer(&e.current_contract_address(), &to, &amount_out);
+            amount_out
+        }
+    }
+}
+
+use swap_pool_contract::{SwapPool, SwapPoolClient};
+
 /********** query_calculate_fee tests **********/
 
 #[test]
@@ -1405,8 +1462,14 @@ fn test_batch_single_target() {
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
     // Check events BEFORE any additional contract calls that may reset the event log.
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 1);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        1
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
 
     assert_eq!(check_balance(&env, &token_id, &target), 990i128); // 1% fee
     assert_eq!(check_balance(&env, &token_id, &user), 999_000i128);
@@ -1424,8 +1487,14 @@ fn test_batch_duplicate_targets() {
     let amounts = Vec::from_array(&env, [1000i128, 2000i128, 3000i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 3);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        3
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Net: 990 + 1980 + 2970 = 5940
     assert_eq!(check_balance(&env, &token_id, &target), 5940i128);
 }
@@ -1442,8 +1511,14 @@ fn test_batch_target_is_source() {
     let amounts = Vec::from_array(&env, [1000i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 1);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        1
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Started with 1_000_000. Paid 1000, received 990. Net: 999_990.
     assert_eq!(check_balance(&env, &token_id, &user), 999_990i128);
 }
@@ -1459,8 +1534,14 @@ fn test_batch_target_is_contract() {
     let amounts = Vec::from_array(&env, [1000i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 1);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        1
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Contract should hold 1000 total (990 transferred to itself as target + 10 accrued fee).
     assert_eq!(check_balance(&env, &token_id, &bridge_id), 1000i128);
 }
@@ -1527,7 +1608,10 @@ fn test_batch_fee_never_produces_zero_net_within_max_fee_bps() {
     let amounts = Vec::from_array(&env, [1i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        1
+    );
     assert_eq!(check_balance(&env, &token_id, &target), 1i128);
     let _ = admin;
 }
@@ -1565,9 +1649,18 @@ fn test_batch_blocked_target_skipped_and_refunded() {
     let amounts = Vec::from_array(&env, [1000i128, 500i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 1);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchTransferFailed"), 1);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        1
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchTransferFailed"),
+        1
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Good target receives net amount (1% fee on 1000 = 990).
     assert_eq!(check_balance(&env, &token_id, &good), 990i128);
     // Blocked target receives nothing; 500 refunded to source.
@@ -1592,9 +1685,18 @@ fn test_batch_all_blocked_full_refund() {
     let amounts = Vec::from_array(&env, [400i128, 600i128]);
     bridge.batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 0);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchTransferFailed"), 2);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        0
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchTransferFailed"),
+        2
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Full refund — source balance unchanged.
     assert_eq!(check_balance(&env, &token_id, &user), 1_000_000i128);
     assert_eq!(check_balance(&env, &token_id, &t1), 0i128);
@@ -1623,11 +1725,20 @@ fn test_batch_100_targets() {
 
     bridge.batch_fund_c_address(&user, &targets_vec, &amounts_vec, &token_id, &None, &None);
 
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "CAddressFunded"), 100);
-    assert_eq!(count_events_with_topic(&env, &bridge_id, "BatchCompleted"), 1);
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "CAddressFunded"),
+        100
+    );
+    assert_eq!(
+        count_events_with_topic(&env, &bridge_id, "BatchCompleted"),
+        1
+    );
     // Each target receives 990 (1% fee on 1000).
     for i in 0..100 {
-        assert_eq!(check_balance(&env, &token_id, &target_addrs.get(i).unwrap()), 990i128);
+        assert_eq!(
+            check_balance(&env, &token_id, &target_addrs.get(i).unwrap()),
+            990i128
+        );
     }
     // Source spent 100_000 tokens from the extra mint.
     assert_eq!(check_balance(&env, &token_id, &user), 1_000_000i128); // original unchanged
@@ -1824,7 +1935,14 @@ fn test_batch_fund_deadline_expired_reverts() {
     let targets = Vec::from_array(&env, [t1.clone()]);
     let amounts = Vec::from_array(&env, [500i128]);
     assert_eq!(
-        bridge.try_batch_fund_c_address(&user, &targets, &amounts, &token_id, &None, &Some(4999u64)),
+        bridge.try_batch_fund_c_address(
+            &user,
+            &targets,
+            &amounts,
+            &token_id,
+            &None,
+            &Some(4999u64)
+        ),
         Err(Ok(BridgeError::TransactionExpired))
     );
     assert_eq!(check_balance(&env, &token_id, &user), 1_000_000i128);
@@ -1849,14 +1967,16 @@ fn test_batch_fund_deadline_in_future_passes() {
 mod timelocked_tests {
     use super::*;
 
-    fn setup_timelocked(env: &Env) -> (
+    fn setup_timelocked(
+        env: &Env,
+    ) -> (
         crate::OnboardingBridgeClient<'_>,
         Address,
         Address,
         Address,
         Address,
     ) {
-        let (bridge_id, token_id) = register_all_contracts(env);
+        let (bridge_id, token_id) = register_all_contracts_mocked(env);
         let bridge = create_bridge_client(env, &bridge_id);
         let (admin, user, fee_collector) = create_test_users(env);
         init_token(env, &token_id, &admin);
@@ -1921,12 +2041,7 @@ mod timelocked_tests {
 
         assert_eq!(
             bridge.try_fund_c_address_timelocked(
-                &user,
-                &target,
-                &token_id,
-                &500i128,
-                &3_100u64,
-                &3_101u64,
+                &user, &target, &token_id, &500i128, &3_100u64, &3_101u64,
             ),
             Err(Ok(BridgeError::InvalidReleaseTime))
         );
@@ -1941,12 +2056,7 @@ mod timelocked_tests {
 
         assert_eq!(
             bridge.try_fund_c_address_timelocked(
-                &user,
-                &target,
-                &token_id,
-                &500i128,
-                &4_000u64,
-                &0u64,
+                &user, &target, &token_id, &500i128, &4_000u64, &0u64,
             ),
             Err(Ok(BridgeError::InvalidReleaseTime))
         );
@@ -2064,7 +2174,9 @@ mod crosschain_tests {
         }
     }
 
-    fn setup(env: &Env) -> (
+    fn setup(
+        env: &Env,
+    ) -> (
         soroban_sdk::Address,
         soroban_sdk::Address,
         soroban_sdk::Address,
@@ -2116,8 +2228,14 @@ mod crosschain_tests {
         bridge.fund_c_address_crosschain(&chain_id, &tx_hash, &target, &token_id, &amount, &sigs);
 
         // 1% fee on 1000 = 10; net = 990
-        assert_eq!(TestTokenClient::new(&env, &token_id).balance(&target), 990i128);
-        assert_eq!(TestTokenClient::new(&env, &token_id).balance(&bridge_id), 10_000 - 990);
+        assert_eq!(
+            TestTokenClient::new(&env, &token_id).balance(&target),
+            990i128
+        );
+        assert_eq!(
+            TestTokenClient::new(&env, &token_id).balance(&bridge_id),
+            10_000 - 990
+        );
     }
 
     #[test]
@@ -2140,13 +2258,19 @@ mod crosschain_tests {
         let amount: i128 = 500;
 
         let payload_hash = build_payload_hash(&env, chain_id, &tx_hash, &target, &token_id, amount);
-        let sigs = Vec::from_array(&env, [
-            make_relayer_sig(&env, &sk1, &payload_hash),
-            make_relayer_sig(&env, &sk2, &payload_hash),
-        ]);
+        let sigs = Vec::from_array(
+            &env,
+            [
+                make_relayer_sig(&env, &sk1, &payload_hash),
+                make_relayer_sig(&env, &sk2, &payload_hash),
+            ],
+        );
 
         bridge.fund_c_address_crosschain(&chain_id, &tx_hash, &target, &token_id, &amount, &sigs);
-        assert_eq!(TestTokenClient::new(&env, &token_id).balance(&target), 495i128);
+        assert_eq!(
+            TestTokenClient::new(&env, &token_id).balance(&target),
+            495i128
+        );
     }
 
     #[test]
@@ -2168,7 +2292,9 @@ mod crosschain_tests {
 
         // Second call with same tx_hash must fail
         assert_eq!(
-            bridge.try_fund_c_address_crosschain(&1u32, &tx_hash, &target, &token_id, &100i128, &sigs),
+            bridge.try_fund_c_address_crosschain(
+                &1u32, &tx_hash, &target, &token_id, &100i128, &sigs
+            ),
             Err(Ok(BridgeError::ReplayedNonce))
         );
     }
@@ -2193,7 +2319,9 @@ mod crosschain_tests {
         let sigs = Vec::from_array(&env, [make_relayer_sig(&env, &sk1, &payload_hash)]);
 
         assert_eq!(
-            bridge.try_fund_c_address_crosschain(&1u32, &tx_hash, &target, &token_id, &100i128, &sigs),
+            bridge.try_fund_c_address_crosschain(
+                &1u32, &tx_hash, &target, &token_id, &100i128, &sigs
+            ),
             Err(Ok(BridgeError::BelowThreshold))
         );
     }
@@ -2206,7 +2334,10 @@ mod crosschain_tests {
         let sk_registered = make_signing_key([1u8; 32]);
         let sk_stranger = make_signing_key([9u8; 32]); // not registered
 
-        bridge.add_relayer(&BytesN::from_array(&env, sk_registered.verifying_key().as_bytes()));
+        bridge.add_relayer(&BytesN::from_array(
+            &env,
+            sk_registered.verifying_key().as_bytes(),
+        ));
         bridge.set_relayer_threshold(&1u32);
 
         let target = soroban_sdk::Address::generate(&env);
@@ -2216,7 +2347,9 @@ mod crosschain_tests {
         let sigs = Vec::from_array(&env, [make_relayer_sig(&env, &sk_stranger, &payload_hash)]);
 
         assert_eq!(
-            bridge.try_fund_c_address_crosschain(&1u32, &tx_hash, &target, &token_id, &100i128, &sigs),
+            bridge.try_fund_c_address_crosschain(
+                &1u32, &tx_hash, &target, &token_id, &100i128, &sigs
+            ),
             Err(Ok(BridgeError::NotRelayer))
         );
     }
@@ -2563,4 +2696,431 @@ fn test_pause_requires_admin_auth() {
     env.set_auths(&[] as &[SorobanAuthorizationEntry]);
 
     bridge.pause(&None);
+}
+
+// ============================================================================
+// Issue #41: Concurrent / sequential operation simulation tests
+//
+// Soroban executes all operations in a ledger sequentially (single-threaded),
+// but cross-contract call ordering and interleaved state mutations can still
+// produce surprising results. These tests simulate the scenarios described in
+// issue #41 within the deterministic Soroban test environment:
+//
+//   1. Token transfer during fee withdrawal (cross-contract edge case)
+//   2. Batch funding where some targets are blocked mid-batch (sequential skips)
+//   3. Multiple fee withdrawals in sequence
+//   4. Contract initialization race (multiple init calls in same ledger context)
+// ============================================================================
+
+#[cfg(test)]
+mod concurrent_sequential_tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Shared setup helper
+    // -----------------------------------------------------------------------
+
+    struct ConcurrentSetup {
+        env: Env,
+        bridge_id: Address,
+        token_id: Address,
+        admin: Address,
+        fee_collector: Address,
+        user: Address,
+    }
+
+    impl ConcurrentSetup {
+        fn new() -> Self {
+            let env = Env::default();
+            env.mock_all_auths();
+
+            let (bridge_id, token_id) = register_all_contracts(&env);
+            let (admin, user, fee_collector) = create_test_users(&env);
+
+            init_token(&env, &token_id, &admin);
+
+            let bridge = create_bridge_client(&env, &bridge_id);
+            bridge.initialize(&admin, &fee_collector, &100u32, &None); // 1% fee
+            bridge.add_asset(&token_id, &None);
+
+            Self {
+                env,
+                bridge_id,
+                token_id,
+                admin,
+                fee_collector,
+                user,
+            }
+        }
+
+        fn bridge(&self) -> crate::OnboardingBridgeClient<'_> {
+            create_bridge_client(&self.env, &self.bridge_id)
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 1: Token transfer during fee withdrawal
+    //
+    // Soroban prevents true re-entrancy via the ReentrancyGuard. This test
+    // verifies that a fund_c_address followed immediately by withdraw_fees in
+    // the same ledger context produces correct sequential state:
+    //   - fee accrued after fund equals what withdraw_fees drains
+    //   - no double-spending or ghost balance
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sequential_fund_then_withdraw_fees_correct_state() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 10_000i128);
+
+        let target = Address::generate(&s.env);
+
+        // Step 1: fund — accrues 100 in fees (1% of 10_000)
+        s.bridge()
+            .fund_c_address(&s.user, &target, &s.token_id, &10_000i128, &None, &None);
+
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 100i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &s.bridge_id), 100i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &target), 9_900i128);
+
+        // Step 2: withdraw_fees in the same ledger (next sequential call)
+        s.bridge().withdraw_fees(&s.token_id, &100i128, &None);
+
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &s.bridge_id), 0i128);
+        assert_eq!(
+            check_balance(&s.env, &s.token_id, &s.fee_collector),
+            100i128
+        );
+    }
+
+    #[test]
+    fn test_sequential_withdraw_exceeds_accrued_after_partial_withdrawal() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 20_000i128);
+
+        let target = Address::generate(&s.env);
+        // Fund twice: 10_000 each → fee = 100 each → 200 total accrued
+        s.bridge()
+            .fund_c_address(&s.user, &target, &s.token_id, &10_000i128, &None, &None);
+        s.bridge()
+            .fund_c_address(&s.user, &target, &s.token_id, &10_000i128, &None, &None);
+
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 200i128);
+
+        // Withdraw 150 → 50 remaining
+        s.bridge().withdraw_fees(&s.token_id, &150i128, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 50i128);
+
+        // Try to withdraw 51 — should fail: InsufficientReclaimable
+        assert_eq!(
+            s.bridge().try_withdraw_fees(&s.token_id, &51i128, &None),
+            Err(Ok(BridgeError::InsufficientReclaimable))
+        );
+
+        // Can still withdraw the remaining 50
+        s.bridge().withdraw_fees(&s.token_id, &50i128, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 2: Batch funding where targets change access status mid-processing
+    //
+    // In a single batch call the access check is evaluated per-entry in sequence.
+    // If a target is blocked, its amount is refunded; others succeed.  This
+    // simulates the observable effect of interleaved access changes across
+    // sequential calls.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_batch_sequential_access_change_between_calls() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 5_000i128);
+
+        let target_a = Address::generate(&s.env);
+        let target_b = Address::generate(&s.env);
+
+        // Call 1: both targets open — both succeed
+        let targets = Vec::from_array(&s.env, [target_a.clone(), target_b.clone()]);
+        let amounts = Vec::from_array(&s.env, [1_000i128, 1_000i128]);
+        s.bridge()
+            .batch_fund_c_address(&s.user, &targets, &amounts, &s.token_id, &None, &None);
+        assert_eq!(check_balance(&s.env, &s.token_id, &target_a), 990i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &target_b), 990i128);
+
+        // Simulate "interleaved state change": block target_b between calls
+        s.bridge().add_to_blocklist(&target_b, &None);
+
+        // Call 2: target_a still open, target_b blocked → target_b refunded
+        let targets2 = Vec::from_array(&s.env, [target_a.clone(), target_b.clone()]);
+        let amounts2 = Vec::from_array(&s.env, [500i128, 500i128]);
+        s.bridge()
+            .batch_fund_c_address(&s.user, &targets2, &amounts2, &s.token_id, &None, &None);
+
+        // target_a receives additional 495 (1% fee on 500); target_b gets nothing
+        assert_eq!(check_balance(&s.env, &s.token_id, &target_a), 990 + 495);
+        assert_eq!(check_balance(&s.env, &s.token_id, &target_b), 990i128); // unchanged
+                                                                            // user gets back the 500 for blocked target_b
+        assert_eq!(
+            check_balance(&s.env, &s.token_id, &s.user),
+            5_000 - 2_000 - 500
+        );
+    }
+
+    #[test]
+    fn test_batch_sequential_all_targets_blocked_mid_sequence() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 3_000i128);
+
+        let t1 = Address::generate(&s.env);
+        let t2 = Address::generate(&s.env);
+        let t3 = Address::generate(&s.env);
+
+        // Block all three targets before the batch call
+        s.bridge().add_to_blocklist(&t1, &None);
+        s.bridge().add_to_blocklist(&t2, &None);
+        s.bridge().add_to_blocklist(&t3, &None);
+
+        let targets = Vec::from_array(&s.env, [t1.clone(), t2.clone(), t3.clone()]);
+        let amounts = Vec::from_array(&s.env, [1_000i128, 1_000i128, 1_000i128]);
+
+        s.bridge()
+            .batch_fund_c_address(&s.user, &targets, &amounts, &s.token_id, &None, &None);
+
+        // Full refund: user gets all 3_000 back
+        assert_eq!(check_balance(&s.env, &s.token_id, &s.user), 3_000i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &t1), 0i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &t2), 0i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &t3), 0i128);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 3: Multiple fee withdrawals in sequence
+    //
+    // Verifies that sequential partial withdrawals correctly decrement the
+    // accrued-fees counter and never allow over-withdrawal.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_multiple_sequential_fee_withdrawals() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 100_000i128);
+
+        let target = Address::generate(&s.env);
+        // 10 fund calls × 10_000 each @ 1% = 1_000 total fees
+        for _ in 0..10 {
+            s.bridge()
+                .fund_c_address(&s.user, &target, &s.token_id, &10_000i128, &None, &None);
+        }
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 1_000i128);
+
+        // 5 sequential partial withdrawals of 200 each = 1_000 total
+        for i in 0..5u64 {
+            s.bridge().withdraw_fees(&s.token_id, &200i128, &None);
+            let remaining = 1_000 - (200 * (i as i128 + 1));
+            assert_eq!(s.bridge().query_accrued_fees(&s.token_id), remaining);
+        }
+
+        // All drained
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+        assert_eq!(
+            check_balance(&s.env, &s.token_id, &s.fee_collector),
+            1_000i128
+        );
+
+        // 6th withdrawal must fail
+        assert_eq!(
+            s.bridge().try_withdraw_fees(&s.token_id, &1i128, &None),
+            Err(Ok(BridgeError::InsufficientReclaimable))
+        );
+    }
+
+    #[test]
+    fn test_sequential_fund_withdraw_fund_withdraw_interleaved() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 50_000i128);
+
+        let target = Address::generate(&s.env);
+
+        // Round 1: fund 10_000 → fee 100, then immediately withdraw 100
+        s.bridge()
+            .fund_c_address(&s.user, &target, &s.token_id, &10_000i128, &None, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 100i128);
+        s.bridge().withdraw_fees(&s.token_id, &100i128, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+
+        // Round 2: fund 20_000 → fee 200, withdraw 100, 50 remaining
+        s.bridge()
+            .fund_c_address(&s.user, &target, &s.token_id, &20_000i128, &None, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 200i128);
+        s.bridge().withdraw_fees(&s.token_id, &100i128, &None);
+        s.bridge().withdraw_fees(&s.token_id, &100i128, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+
+        // Total withdrawn = 100 + 200 = 300
+        assert_eq!(
+            check_balance(&s.env, &s.token_id, &s.fee_collector),
+            300i128
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 4: Contract initialization race
+    //
+    // Soroban processes transactions sequentially; a second initialize call in
+    // the same execution context must return AlreadyInitialized regardless of
+    // how quickly it follows the first. These tests prove the guard is robust.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_double_initialize_rejected_sequential() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (bridge_id, _) = register_all_contracts_mocked(&env);
+        let bridge = create_bridge_client(&env, &bridge_id);
+        let (admin, _, fee_collector) = create_test_users(&env);
+
+        // First init succeeds
+        bridge.initialize(&admin, &fee_collector, &50u32, &None);
+        assert!(bridge.query_is_initialized());
+
+        // Immediate second call: different admin, should still be rejected
+        let attacker = Address::generate(&env);
+        assert_eq!(
+            bridge.try_initialize(&attacker, &attacker, &50u32, &None),
+            Err(Ok(BridgeError::AlreadyInitialized))
+        );
+
+        // State must reflect the original init only
+        assert_eq!(bridge.query_admin(), admin);
+        assert_eq!(bridge.query_fee_collector(), fee_collector);
+        assert_eq!(bridge.query_fee_bps(), 50u32);
+    }
+
+    #[test]
+    fn test_initialize_race_cannot_hijack_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (bridge_id, _) = register_all_contracts_mocked(&env);
+        let bridge = create_bridge_client(&env, &bridge_id);
+        let (admin, _, fee_collector) = create_test_users(&env);
+
+        bridge.initialize(&admin, &fee_collector, &100u32, &None);
+
+        // Simulate three rapid "race" init attempts
+        for _ in 0..3 {
+            let fake_admin = Address::generate(&env);
+            assert_eq!(
+                bridge.try_initialize(&fake_admin, &fake_admin, &1000u32, &None),
+                Err(Ok(BridgeError::AlreadyInitialized))
+            );
+        }
+
+        // Contract state is intact
+        assert_eq!(bridge.query_admin(), admin);
+        assert_eq!(bridge.query_fee_bps(), 100u32);
+    }
+
+    #[test]
+    fn test_initialize_race_with_different_fee_bps() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (bridge_id, _) = register_all_contracts_mocked(&env);
+        let bridge = create_bridge_client(&env, &bridge_id);
+        let (admin, _, fee_collector) = create_test_users(&env);
+
+        bridge.initialize(&admin, &fee_collector, &200u32, &None);
+
+        // Second call with lower fee should NOT succeed and overwrite
+        assert_eq!(
+            bridge.try_initialize(&admin, &fee_collector, &0u32, &None),
+            Err(Ok(BridgeError::AlreadyInitialized))
+        );
+
+        // Fee unchanged
+        assert_eq!(bridge.query_fee_bps(), 200u32);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 5: Re-entrancy guard prevents nested calls
+    //
+    // The ReentrancyGuard flag is set for the duration of each mutating call.
+    // This test verifies fund_c_address → the guard is cleared after return,
+    // allowing the next sequential call to proceed normally.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sequential_calls_after_reentrancy_guard_clears() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 10_000i128);
+
+        let t1 = Address::generate(&s.env);
+        let t2 = Address::generate(&s.env);
+        let t3 = Address::generate(&s.env);
+
+        // Three sequential fund calls — each must succeed (guard clears between calls)
+        s.bridge()
+            .fund_c_address(&s.user, &t1, &s.token_id, &3_000i128, &None, &None);
+        s.bridge()
+            .fund_c_address(&s.user, &t2, &s.token_id, &3_000i128, &None, &None);
+        s.bridge()
+            .fund_c_address(&s.user, &t3, &s.token_id, &4_000i128, &None, &None);
+
+        // Total fee: 30 + 30 + 40 = 100; net to each: 2970, 2970, 3960
+        assert_eq!(check_balance(&s.env, &s.token_id, &t1), 2_970i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &t2), 2_970i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &t3), 3_960i128);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 100i128);
+        assert_eq!(check_balance(&s.env, &s.token_id, &s.user), 0i128);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 6: Fee counter consistency across mixed batch + single calls
+    //
+    // Mixing batch_fund_c_address and fund_c_address in sequence must keep
+    // all counters (accrued_fees, total_bridged, total_fees_collected) consistent.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_mixed_batch_and_single_fee_counter_consistency() {
+        let s = ConcurrentSetup::new();
+        mint_tokens(&s.env, &s.token_id, &s.user, 50_000i128);
+
+        let t1 = Address::generate(&s.env);
+        let t2 = Address::generate(&s.env);
+        let t3 = Address::generate(&s.env);
+
+        // Single fund: 10_000 → fee 100, net 9_900
+        s.bridge()
+            .fund_c_address(&s.user, &t1, &s.token_id, &10_000i128, &None, &None);
+
+        // Batch fund: [20_000, 5_000] → fees 200 + 50 = 250, nets 19_800 + 4_950
+        let targets = Vec::from_array(&s.env, [t2.clone(), t3.clone()]);
+        let amounts = Vec::from_array(&s.env, [20_000i128, 5_000i128]);
+        s.bridge()
+            .batch_fund_c_address(&s.user, &targets, &amounts, &s.token_id, &None, &None);
+
+        // Another single fund: 15_000 → fee 150, net 14_850
+        s.bridge()
+            .fund_c_address(&s.user, &t1, &s.token_id, &15_000i128, &None, &None);
+
+        // Total fees = 100 + 250 + 150 = 500
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 500i128);
+        assert_eq!(s.bridge().query_total_fees_collected(&s.token_id), 500i128);
+        // Total bridged = 9_900 + 19_800 + 4_950 + 14_850 = 49_500
+        assert_eq!(s.bridge().query_total_bridged(&s.token_id), 49_500i128);
+
+        // Now drain all fees sequentially in two calls
+        s.bridge().withdraw_fees(&s.token_id, &300i128, &None);
+        s.bridge().withdraw_fees(&s.token_id, &200i128, &None);
+        assert_eq!(s.bridge().query_accrued_fees(&s.token_id), 0i128);
+        assert_eq!(
+            check_balance(&s.env, &s.token_id, &s.fee_collector),
+            500i128
+        );
+    }
 }

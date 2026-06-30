@@ -1,9 +1,7 @@
 #![cfg(feature = "testutils")]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    testutils::Address as _,
-    Address, Env, IntoVal, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, Vec,
 };
 
 use onboarding_bridge::OnboardingBridge;
@@ -361,8 +359,18 @@ mod bench_tests {
         ];
 
         for r in &results {
-            assert!(r.cpu_insns > 0, "{}/{} should use CPU", r.function_name, r.variant);
-            assert!(r.mem_bytes > 0, "{}/{} should use memory", r.function_name, r.variant);
+            assert!(
+                r.cpu_insns > 0,
+                "{}/{} should use CPU",
+                r.function_name,
+                r.variant
+            );
+            assert!(
+                r.mem_bytes > 0,
+                "{}/{} should use memory",
+                r.function_name,
+                r.variant
+            );
         }
     }
 }

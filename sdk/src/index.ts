@@ -1,5 +1,55 @@
+/**
+ * @fileoverview C-Address Onboarding Bridge SDK — public entry point.
+ *
+ * This package provides a TypeScript/JavaScript SDK for the Onboarding Bridge
+ * Soroban smart contract on Stellar. It handles transaction building, signing,
+ * submission, and automatic retries so callers only need to supply their
+ * Keypair and intent.
+ *
+ * ## Quick start
+ *
+ * ```ts
+ * import { OnboardingBridgeSDK, OffRampIntegration } from '@stellar/c-address-onboarding-bridge-sdk';
+ * import { Keypair, Networks } from '@stellar/stellar-sdk';
+ *
+ * const sdk = new OnboardingBridgeSDK({
+ *   contractId: 'CA...',
+ *   rpcUrl: 'https://soroban-testnet.stellar.org',
+ *   networkPassphrase: Networks.TESTNET,
+ * });
+ *
+ * const result = await sdk.fundCAddress(
+ *   { source: keypair.publicKey(), target: 'CC...', asset: 'CD...', amount: '1000000' },
+ *   keypair,
+ * );
+ * ```
+ *
+ * ## Exports
+ *
+ * | Export | Description |
+ * |---|---|
+ * | {@link OnboardingBridgeSDK} | Main SDK class — wraps all contract calls |
+ * | {@link OffRampIntegration} | Moonpay / Transak / Ramp / Banxa URL builder + CEX memo helpers |
+ * | `assertAccountAddress` | Validates a G-address; throws on invalid input |
+ * | `assertContractAddress` | Validates a C-address; throws on invalid input |
+ * | `withRetry` | Low-level retry wrapper for arbitrary async functions |
+ * | `withRpcRetry` | Wraps a `SorobanRpc.Server` with automatic retries |
+ * | `isRetryableRpcError` | Classifies an error as transient (worth retrying) |
+ * | `computeBackoffDelay` | Computes exponential backoff delay with optional jitter |
+ * | `VIEW_RETRY_POLICY` | Default retry policy for idempotent read calls |
+ * | `STATE_CHANGING_RETRY_POLICY` | Conservative retry policy for write calls |
+ *
+ * All types are also re-exported; import them directly:
+ *
+ * ```ts
+ * import type { BridgeConfig, FundCOptions, TransactionResult } from '@stellar/c-address-onboarding-bridge-sdk';
+ * ```
+ *
+ * @module index
+ * @packageDocumentation
+ */
+
 export { OnboardingBridgeSDK } from './bridge';
-export * from './wallets';
 export { OffRampIntegration } from './offramp';
 export { assertAccountAddress, assertContractAddress } from './validate';
 export {
@@ -17,4 +67,20 @@ export type {
   RetryLogger,
   RetryableClassifier,
 } from './retry';
+export { EventSubscriber } from './events';
+export type {
+  CAddressFundedEvent,
+  FeesWithdrawnEvent,
+  AdminChangedEvent,
+  MetaFundExecutedEvent,
+  GenericBridgeEvent,
+  BridgeEventPayload,
+  BridgeEventMap,
+  BridgeEventName,
+  BridgeEventCallback,
+  Unsubscribe,
+  EventSubscriberConfig,
+} from './events';
+export type { CostEstimate } from './types';
 export * from './types';
+export * from './wallets';
